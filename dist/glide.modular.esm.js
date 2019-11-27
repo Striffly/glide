@@ -1,5 +1,5 @@
 /*!
- * Glide.js v3.3.0
+ * Glide.js v3.4.0
  * (c) 2013-2019 Jędrzej Chałubek <jedrzej.chalubek@gmail.com> (http://jedrzejchalubek.com/)
  * Released under the MIT License.
  */
@@ -115,6 +115,13 @@ var defaults = {
   dragThreshold: 120,
 
   /**
+   * Angle required to activate slides moving on swiping or dragging.
+   *
+   * @type {Number}
+   */
+  touchAngle: 45,
+
+  /**
    * Moving distance ratio of the slides on a swiping and dragging.
    *
    * @type {Number}
@@ -122,11 +129,11 @@ var defaults = {
   touchRatio: 0.5,
 
   /**
-   * Angle required to activate slides moving on swiping or dragging.
+   * Definest how many clones will be created in looped mode.
    *
    * @type {Number}
    */
-  touchAngle: 45,
+  cloneRatio: 1,
 
   /**
    * Duration of the animation in milliseconds.
@@ -197,10 +204,6 @@ var defaults = {
       ltr: 'glide--ltr',
       rtl: 'glide--rtl'
     },
-    type: {
-      slider: 'glide--slider',
-      carousel: 'glide--carousel'
-    },
     slide: {
       clone: 'glide__slide--clone',
       active: 'glide__slide--active'
@@ -253,6 +256,21 @@ var createClass = function () {
     return Constructor;
   };
 }();
+
+var defineProperty = function (obj, key, value) {
+  if (key in obj) {
+    Object.defineProperty(obj, key, {
+      value: value,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  } else {
+    obj[key] = value;
+  }
+
+  return obj;
+};
 
 var _extends = Object.assign || function (target) {
   for (var i = 1; i < arguments.length; i++) {
@@ -451,47 +469,24 @@ function sortKeys(obj) {
 /**
  * Merges passed settings object with default options.
  *
- * @param  {Object} defaults
- * @param  {Object} settings
+ * @param  {Object} target
+ * @param  {Object} source
  * @return {Object}
  */
-function mergeOptions(defaults, settings) {
-  var options = _extends({}, defaults, settings);
+function mergeDeep(target, source) {
+  var output = _extends({}, target);
 
-  // `Object.assign` do not deeply merge objects, so we
-  // have to do it manually for every nested object
-  // in options. Although it does not look smart,
-  // it's smaller and faster than some fancy
-  // merging deep-merge algorithm script.
-  if (settings.hasOwnProperty('classes')) {
-    options.classes = _extends({}, defaults.classes, settings.classes);
-
-    if (settings.classes.hasOwnProperty('direction')) {
-      options.classes.direction = _extends({}, defaults.classes.direction, settings.classes.direction);
-    }
-
-    if (settings.classes.hasOwnProperty('type')) {
-      options.classes.type = _extends({}, defaults.classes.type, settings.classes.type);
-    }
-
-    if (settings.classes.hasOwnProperty('slide')) {
-      options.classes.slide = _extends({}, defaults.classes.slide, settings.classes.slide);
-    }
-
-    if (settings.classes.hasOwnProperty('arrow')) {
-      options.classes.arrow = _extends({}, defaults.classes.arrow, settings.classes.arrow);
-    }
-
-    if (settings.classes.hasOwnProperty('nav')) {
-      options.classes.nav = _extends({}, defaults.classes.nav, settings.classes.nav);
-    }
+  if (isObject(target) && isObject(source)) {
+    Object.keys(source).forEach(function (key) {
+      if (isObject(source[key])) {
+        if (!(key in target)) _extends(output, defineProperty({}, key, source[key]));else output[key] = mergeDeep(target[key], source[key]);
+      } else {
+        _extends(output, defineProperty({}, key, source[key]));
+      }
+    });
   }
 
-  if (settings.hasOwnProperty('breakpoints')) {
-    options.breakpoints = _extends({}, defaults.breakpoints, settings.breakpoints);
-  }
-
-  return options;
+  return output;
 }
 
 var EventsBus = function () {
@@ -592,7 +587,7 @@ var Glide = function () {
 
     this.disabled = false;
     this.selector = selector;
-    this.settings = mergeOptions(defaults, options);
+    this.settings = mergeDeep(defaults, options);
     this.index = this.settings.startAt;
   }
 
@@ -655,7 +650,7 @@ var Glide = function () {
     value: function update() {
       var settings = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
 
-      this.settings = mergeOptions(this.settings, settings);
+      this.settings = mergeDeep(this.settings, settings);
 
       if (settings.hasOwnProperty('startAt')) {
         this.index = settings.startAt;
@@ -943,7 +938,12 @@ function Run (Glide, Components, Events) {
       // While direction is `=` we want jump to
       // a specified index described in steps.
       if (direction === '=') {
-        Glide.index = steps;
+        // Check if bound is true, as we want to avoid whitespaces
+        if (Glide.settings.bound && steps > length) {
+          Glide.index = length;
+        } else {
+          Glide.index = steps;
+        }
 
         return;
       }
@@ -1663,6 +1663,58 @@ function Move (Glide, Components, Events) {
   return Move;
 }
 
+function Loop (Glide, Components, Events) {
+  var Loop = {
+    /**
+     * Create pattern map and collect slides to be cloned.
+     */
+    mount: function mount() {
+      if (Glide.settings.loop) {
+        this.setup();
+      }
+    },
+    setup: function setup() {
+      if (Glide.index < Glide.settings.perView) {
+        this.setEndSlides();
+      }
+    },
+    setEndSlides: function setEndSlides() {
+      var slideWidth = Components.Sizes.slideWidth;
+
+
+      for (var i = 0; i < this.slidesEnd.length; i++) {
+        this.slidesEnd[i].style.position = 'absolute';
+        this.slidesEnd[i].style.top = '0px';
+        this.slidesEnd[i].style.left = '-' + slideWidth * (i + 1) + 'px';
+      }
+    }
+  };
+
+  define(Loop, 'slidesEnd', {
+    /**
+     * Gets additional dimentions value caused by clones.
+     *
+     * @return {Number}
+     */
+    get: function get() {
+      return Components.Html.slides.slice('-' + Glide.settings.perView);
+    }
+  });
+
+  define(Loop, 'slidesStart', {
+    /**
+     * Gets additional dimentions value caused by clones.
+     *
+     * @return {Number}
+     */
+    get: function get() {
+      return Components.Html.slides.slice(0, Glide.settings.perView - 1);
+    }
+  });
+
+  return Loop;
+}
+
 function Sizes (Glide, Components, Events) {
   var Sizes = {
     /**
@@ -1724,7 +1776,7 @@ function Sizes (Glide, Components, Events) {
      * @return {Number}
      */
     get: function get() {
-      return Components.Html.root.offsetWidth;
+      return Components.Html.root.getBoundingClientRect().width;
     }
   });
 
@@ -1735,7 +1787,7 @@ function Sizes (Glide, Components, Events) {
      * @return {Number}
      */
     get: function get() {
-      return Sizes.slideWidth * Sizes.length + Components.Gaps.grow + Components.Clones.grow;
+      return Sizes.slideWidth * Sizes.length + Components.Gaps.grow;
     }
   });
 
@@ -1850,150 +1902,6 @@ function Build (Glide, Components, Events) {
   });
 
   return Build;
-}
-
-function Clones (Glide, Components, Events) {
-  var Clones = {
-    /**
-     * Create pattern map and collect slides to be cloned.
-     */
-    mount: function mount() {
-      this.items = [];
-
-      if (Glide.settings.loop) {
-        this.items = this.collect();
-      }
-    },
-
-
-    /**
-     * Collect clones with pattern.
-     *
-     * @return {[]}
-     */
-    collect: function collect() {
-      var items = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : [];
-      var slides = Components.Html.slides;
-      var _Glide$settings = Glide.settings,
-          perView = _Glide$settings.perView,
-          classes = _Glide$settings.classes;
-
-
-      if (slides.length !== 0) {
-        var peekIncrementer = +!!Glide.settings.peek;
-        var cloneCount = perView + peekIncrementer + Math.round(perView / 2);
-        var append = slides.slice(0, cloneCount).reverse();
-        var prepend = slides.slice(cloneCount * -1);
-
-        for (var r = 0; r < Math.max(1, Math.floor(perView / slides.length)); r++) {
-          for (var i = 0; i < append.length; i++) {
-            var clone = append[i].cloneNode(true);
-
-            clone.classList.add(classes.slide.clone);
-
-            items.push(clone);
-          }
-
-          for (var _i = 0; _i < prepend.length; _i++) {
-            var _clone = prepend[_i].cloneNode(true);
-
-            _clone.classList.add(classes.slide.clone);
-
-            items.unshift(_clone);
-          }
-        }
-      }
-
-      return items;
-    },
-
-
-    /**
-     * Append cloned slides with generated pattern.
-     *
-     * @return {Void}
-     */
-    append: function append() {
-      var items = this.items;
-      var _Components$Html = Components.Html,
-          wrapper = _Components$Html.wrapper,
-          slides = _Components$Html.slides;
-
-
-      var half = Math.floor(items.length / 2);
-      var prepend = items.slice(0, half).reverse();
-      var append = items.slice(half * -1).reverse();
-      var width = Components.Sizes.slideWidth + 'px';
-
-      for (var i = 0; i < append.length; i++) {
-        wrapper.appendChild(append[i]);
-      }
-
-      for (var _i2 = 0; _i2 < prepend.length; _i2++) {
-        wrapper.insertBefore(prepend[_i2], slides[0]);
-      }
-
-      for (var _i3 = 0; _i3 < items.length; _i3++) {
-        items[_i3].style.width = width;
-      }
-    },
-
-
-    /**
-     * Remove all cloned slides.
-     *
-     * @return {Void}
-     */
-    remove: function remove() {
-      var items = this.items;
-
-
-      for (var i = 0; i < items.length; i++) {
-        Components.Html.wrapper.removeChild(items[i]);
-      }
-    }
-  };
-
-  define(Clones, 'grow', {
-    /**
-     * Gets additional dimentions value caused by clones.
-     *
-     * @return {Number}
-     */
-    get: function get() {
-      return (Components.Sizes.slideWidth + Components.Gaps.value) * Clones.items.length;
-    }
-  });
-
-  /**
-   * Append additional slide's clones:
-   * - while glide's type is `carousel`
-   */
-  Events.on('update', function () {
-    Clones.remove();
-    Clones.mount();
-    Clones.append();
-  });
-
-  /**
-   * Append additional slide's clones:
-   * - while glide's type is `carousel`
-   */
-  Events.on('build.before', function () {
-    if (Glide.settings.loop) {
-      Clones.append();
-    }
-  });
-
-  /**
-   * Remove clones HTMLElements:
-   * - on destroying, to bring HTML to its initial state
-   */
-  Events.on('destroy', function () {
-    Clones.remove();
-  });
-
-  return Clones;
 }
 
 var EventsBinder = function () {
@@ -2291,25 +2199,6 @@ function Gap (Glide, Components) {
 }
 
 /**
- * Updates glide movement with width of additional clones width.
- *
- * @param  {Object} Glide
- * @param  {Object} Components
- * @return {Object}
- */
-function Grow (Glide, Components) {
-  /**
-   * Adds to the passed translate width of the half of clones.
-   *
-   * @param  {Number} translate
-   * @return {Number}
-   */
-  return function (translate) {
-    return translate + Components.Clones.grow / 2;
-  };
-}
-
-/**
  * Updates glide movement with a `peek` settings.
  *
  * @param  {Object} Glide
@@ -2381,7 +2270,7 @@ function mutator (Glide, Components, Events) {
    *
    * @type {Array}
    */
-  var TRANSFORMERS = [Gap, Grow, Peeking, Focusing].concat(Glide._t, [Rtl]);
+  var TRANSFORMERS = [Gap, Peeking, Focusing].concat(Glide._t, [Rtl]);
 
   /**
    * Piplines translate value with registered transformers.
@@ -2744,27 +2633,14 @@ function swipe (Glide, Components, Events) {
 
         var swipeDistance = swipe.pageX - swipeStartX;
         var swipeDeg = swipeSin * 180 / Math.PI;
-        var steps = Math.round(swipeDistance / Components.Sizes.slideWidth);
+        var steps = toInt(settings[settings.perSwipe]);
 
         this.enable();
 
         if (swipeDistance > threshold && swipeDeg < settings.touchAngle) {
-          steps = toInt(settings[settings.perSwipe]);
-
-          if (Components.Direction.is('rtl')) {
-            steps = -steps;
-          }
-
-          Components.Run.make(Components.Direction.resolve('<' + steps));
+          Components.Run.make('' + Components.Direction.resolve('<') + steps);
         } else if (swipeDistance < -threshold && swipeDeg < settings.touchAngle) {
-          // While swipe is negative and lower than negative threshold move forward.
-          steps = toInt(settings[settings.perSwipe]);
-
-          if (Components.Direction.is('rtl')) {
-            steps = -steps;
-          }
-
-          Components.Run.make(Components.Direction.resolve('>' + steps));
+          Components.Run.make('' + Components.Direction.resolve('>') + steps);
         } else {
           // While swipe don't reach distance apply previous transform.
           Components.Move.make();
@@ -3788,7 +3664,7 @@ function breakpoints (Glide, Components, Events) {
    * - window resize to update slider
    */
   Binder.on('resize', window, throttle(function () {
-    Glide.settings = mergeOptions(settings, Breakpoints.match(points));
+    Glide.settings = mergeDeep(settings, Breakpoints.match(points));
   }, Glide.settings.throttle));
 
   /**
@@ -3821,7 +3697,7 @@ var COMPONENTS = {
   Sizes: Sizes,
   Gaps: Gaps,
   Move: Move,
-  Clones: Clones,
+  Loop: Loop,
   Resize: Resize,
   Build: Build,
   Run: Run
@@ -3847,4 +3723,4 @@ var Glide$1 = function (_Core) {
 }(Glide);
 
 export default Glide$1;
-export { swipe as Swipe, images as Images, anchors as Anchors, controls as Controls, keyboard as Keyboard, autoplay as Autoplay, breakpoints as Breakpoints };
+export { swipe as Swipe, images as Images, anchors as Anchors, controls as Controls, keyboard as Keyboard, autoplay as Autoplay, breakpoints as Breakpoints, throttle };
